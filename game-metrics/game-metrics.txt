@@ -1,0 +1,384 @@
+пользователи
+select    count(*) as cnt_row  
+        , count(id_user) as cnt_reg  
+        , count(distinct id_user) as cnt_user   
+from skygame.users  
+-------  
+select    id_user  
+                , count(*) as cnt  
+from skygame.users  
+group by id_user  
+having count(*) > 1  
+order by cnt desc  
+
+--время регистрации
+select   max(reg_date) as max_date
+, min(reg_date) as min_date
+, sum(case when reg_date is null then 1.0 else 0.0 end) as cnt_null
+from skygame.users
+
+--динамика пользователей
+select    date_trunc('month',reg_date) as mm
+, count(id_user) as cnt
+from skygame.users
+group by mm
+order by mm
+-- количество игровых сессий 
+select    date_trunc('month', start_session) as mm
+				, count(*) as cnt_session_all
+      , sum(case when end_session - start_session > interval '5 minute' 
+                 then 1.0 else 0.0 end) as cnt_session_signif
+			, sum(case when end_session - start_session > interval '5 minute' 
+                 then 1.0 else 0.0 end) / count(*) as share_signif
+from skygame.game_sessions
+group by mm
+order by mm 
+
+-- количество игровых сессий более 5 мин
+
+select  date_trunc('month', start_session) as mm
+				, avg(end_session - start_session) as avg_len
+from skygame.game_sessions
+where end_session - start_session > interval '5 minute'
+group by mm
+order by mm 
+
+--------------------------------------------------
+# вариант с переводом в часы через extract(epoch from....)
+select  date_trunc('month', start_session) as mm
+				, avg(extract(epoch from end_session - start_session)/(60\*60)) as avg_len_hour
+from skygame.game_sessions
+where end_session - start_session > interval '5 minute'
+group by mm
+order by mm 
+-- количество игровых сессий длинее 1 часа 
+
+select  date_trunc('month', start_session) as mm
+				, sum(case when end_session - start_session > interval '1 hour' 
+									 then 1.0 else 0.0 end) / count(*) as share_long
+from skygame.game_sessions
+where end_session - start_session > interval '5 minute'
+group by mm
+order by mm
+
+--анализ таблицы реферал
+select    count(distinct id_user) as cnt_user
+        , count(*) as cnt_ref
+        , sum(ref_reg) / count(*) as share_reg
+from skygame.referral
+
+-----------------------------------------------------------
+
+select    id_user
+        , count(*) as cnt_ref
+from skygame.referral
+group by id_user
+order by cnt_ref desc
+limit 50
+
+------------------------------------------------------------
+
+select    id_user
+        , count(*) as cnt_ref
+        , sum(ref_reg)/count(*) as share_reg
+from skygame.referral
+group by id_user
+having count(*) > 5
+  and sum(ref_reg)/count(*) >= 0.5
+
+-------------------------------------------------------------
+
+select    id_user
+        , count(*) as cnt_ref
+        , sum(ref_reg)/count(*) as share_reg
+
+from skygame.referral
+group by id_user
+having count(*) > 6 and sum(ref_reg)=0
+
+--- наибольшее и наименьшее время в игре
+select 
+
+    a.id_user,
+
+    sum(extract(epoch from (b.end_session - b.start_session)) / 60) as session_minutes
+
+from skygame.users a
+
+join skygame.game_sessions b on a.id_user = b.id_user
+
+where b.end_session is not null 
+
+  and date_part('year', a.reg_date) = 2022 
+
+group by a.id_user
+
+order by session_minutes desc
+
+limit 25
+
+--анализ проблемных строк
+   select 
+
+        count(case when b.end_session is null then 1 end) as problem_count,
+
+        count(*) as total_count,
+
+        count(case when b.end_session is null then 1 end) * 1.0 / count(*) as problem_share
+
+    from skygame.users a
+
+    join skygame.game_sessions b on a.id_user = b.id_user
+	--
+	select 
+
+    a.dev_type,
+
+    count(case when b.end_session is null then 1 end) as problem_count,
+
+    round(count(case when b.end_session is null then 1 end) * 100.0 / 
+
+          (select count(*) from skygame.users u 
+
+           join skygame.game_sessions g on u.id_user = g.id_user 
+
+           where g.end_session is null), 2) as share_of_all_problems
+
+from skygame.users a
+
+join skygame.game_sessions b on a.id_user = b.id_user
+
+where b.end_session is null
+
+group by a.dev_type
+
+--расчет mau,wau,dau
+--mau 
+
+select 
+
+   date_trunc ('month', start_session) as месяц,
+
+    count(distinct id_user) as mau 
+
+from skygame.game_sessions
+
+where date_trunc('year', start_session) = '2023-01-01'
+
+group by 
+
+         date_trunc('month', start_session)
+
+order by месяц
+
+--wau
+
+select 
+
+   date_trunc('week', start_session) as неделя,
+
+    count(distinct id_user) as wau 
+
+from skygame.game_sessions
+
+where date_trunc('year', start_session) = '2023-01-01'
+
+group by  date_trunc('week', start_session)     
+
+order by неделя
+
+--dau 
+
+select 
+
+ date_trunc('day', start_session) as день,
+
+ count(distinct id_user) as dau 
+
+from skygame.game_sessions
+
+where date_trunc('year', start_session) = '2023-01-01'
+
+group by date_trunc('day', start_session) 
+
+order by день 
+
+-- анализ выручки
+select    date_trunc('month',dtime_pay) as mm
+        , type
+	      , sum(cnt_buy * price) as revenue
+from skygame.monetary m
+   join skygame.item_list i
+      on m.id_item_buy = i.id_item
+   join skygame.log_prices p
+		  on m.id_item_buy = p.id_item
+      and m.dtime_pay >= p.valid_from
+      and m.dtime_pay <= coalesce(valid_to, to_date('01/01/3000', 'DD/MM/YYYY'))
+group by   mm
+         , type
+order by mm
+
+--анализ повышения цен
+select    date_trunc('month',dtime_pay) as mm
+				, avg(cnt_buy) as cnt
+	      , sum(cnt_buy * price) as revenue
+from skygame.monetary m
+	   join skygame.item_list i
+      on m.id_item_buy = i.id_item
+   join skygame.log_prices p
+		  on m.id_item_buy = p.id_item
+      and m.dtime_pay >= p.valid_from
+      and m.dtime_pay <= coalesce(valid_to, to_date('01/01/3000', 'DD/MM/YYYY'))
+where name_item = 'Crystal'
+group by mm
+order by mm
+
+--анализ средних платежей по когортам
+select  *
+      ,extract ('day' from ((select max (dtime_pay) from skygame.monetary) - mm )/30) as interv
+      ,avg_rev/( extract ('day' from ((select max (dtime_pay) from skygame.monetary) - mm )/30)) avg_rev_per_month
+from (
+select    date_trunc('month', reg_date) as mm
+        , sum(cnt_buy * price) as revenue
+        , count(distinct m.id_user) as cnt
+        , sum(cnt_buy * price) / count(distinct m.id_user) as avg_rev
+from skygame.monetary m
+   join skygame.log_prices p
+	  on m.id_item_buy = p.id_item
+      and m.dtime_pay >= p.valid_from
+      and m.dtime_pay <= coalesce(valid_to, to_date('01/01/3000', 'DD/MM/YYYY'))
+   join skygame.users u
+      on m.id_user = u.id_user
+where reg_date < (select max(dtime_pay) - interval '1 month' from skygame.monetary)
+group by mm
+order by mm
+      ) t
+
+	  --анализ лояльности
+	  with crit_invite as 
+(
+select    id_user
+from skygame.referral
+group by id_user
+having count(*) >= 3
+  and sum(ref_reg) >= 1
+)
+
+select    count(distinct id_user) as cnt_user
+, date_trunc('month', start_session) as mm
+from skygame.game_sessions
+where id_user in (select * from crit_invite)
+group by mm
+
+--
+with crit_1000 as 
+(
+select   id_user
+fromskygame.monetary m
+  join skygame.item_list i
+     on m.id_item_buy = i.id_item
+  join skygame.log_prices p
+		 on m.id_item_buy = p.id_item
+     and m.dtime_pay >= p.valid_from
+     and m.dtime_pay <= coalesce(p.valid_to, '3000-01-01')
+groupby id_user
+havingsum(cnt_buy * price) >= 1000
+)
+
+select   count(distinct id_user) as cnt_user
+,date_trunc('month', start_session) as mm
+fromskygame.game_sessions
+whereid_user in (select * from crit_1000)
+groupby mm
+--
+with loyals1 as 
+(
+select    id_user
+from skygame.monetary m
+   join skygame.item_list i
+      on m.id_item_buy = i.id_item
+   join skygame.log_prices p
+		  on m.id_item_buy = p.id_item
+      and m.dtime_pay >= p.valid_from
+      and m.dtime_pay <= coalesce(valid_to, '3000-01-01')
+group by id_user
+having sum(cnt_buy * price) >= 1000
+),
+loyals2 as 
+(
+select    id_user
+from skygame.referral
+group by id_user
+having count(*) >= 3
+  and sum(ref_reg) >= 1
+)
+
+select    count(distinct id_user) as cnt_user
+, date_trunc('month', start_session) as mm
+from skygame.game_sessions
+where id_user in (select * from loyals1)
+and id_user in (select * from loyals2)
+group by mm
+--
+with loyals1 as 
+(
+select    id_user
+from skygame.monetary m
+   join skygame.item_list i
+      on m.id_item_buy = i.id_item
+   join skygame.log_prices p
+		  on m.id_item_buy = p.id_item
+      and m.dtime_pay >= p.valid_from
+      and m.dtime_pay <= coalesce(valid_to, '3000-01-01')
+group by id_user
+having sum(cnt_buy * price) >= 1000
+),
+loyals2 as 
+(
+select    id_user
+from skygame.referral
+group by id_user
+having count(*) >= 3
+  and sum(ref_reg) >= 1
+)
+
+select    count(distinct id_user) as cnt_user
+, date_trunc('month', start_session) as mm
+from skygame.game_sessions
+where id_user in (select * from loyals1)
+or id_user in (select * from loyals2)
+group by mm
+
+--with ltr as (
+
+-- считаем суммарную выручку по пользователям по актуальным ценам
+select
+sm.id_user,
+sum(cnt_buy*price) as revenue
+from skygame.monetary sm
+join skygame.item_list il
+on sm.id_item_buy = il.id_item
+join skygame.log_prices lp
+on sm.id_item_buy = lp.id_item
+and dtime_pay between valid_from and coalesce(valid_to, '2030-01-01')
+group by sm.id_user
+
+),
+-- считаем количество месяцев от момента регистрации до последней игры
+lt_mm as (
+select
+su.id_user
+, ceil(extract ('day' from max(start_session) - min(reg_date))/30) as lt_mm
+from skygame.users su
+join skygame.game_sessions gs
+on su.id_user = gs.id_user
+group by su.id_user
+)
+--джойним два CTE, считаем среднюю выручку за месяц жизни
+select ltr.id_user
+, revenue/lt_mm as ltr_mm
+from ltr
+join lt_mm
+on ltr.id_user = lt_mm.id_user
+order by ltr_mm desc
+limit 100
